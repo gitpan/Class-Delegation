@@ -1,5 +1,5 @@
 package Class::Delegation;
-$VERSION = '1.00';
+$VERSION = '1.05';
 use strict;
 use Carp;
 
@@ -30,8 +30,9 @@ sub install_delegation_for {
 	my $real_AUTOLOAD = *{$symbol}{CODE}
 			 || sub {croak "Could not delegate $AUTOLOAD"};
 		
-	$SIG{__WARN__} = sub {};
+	local $SIG{__WARN__} = sub {};
 	*$symbol = sub {
+		$$symbol = $AUTOLOAD;
 		my ($class, $method) = $AUTOLOAD =~ m/(.*::)(.*)/;
 		my ($invocant, @args) = @_;
 		print STDERR "Delegating: $AUTOLOAD...\n" if ::DEBUG;
@@ -311,8 +312,8 @@ Class::Delegation - Object-oriented delegation
 
 =head1 VERSION
 
-This document describes version 1.00 of Class::Delegation,
-released October 14, 2001.
+This document describes version 1.05 of Class::Delegation,
+released December  1, 2001.
 
 =head1 SYNOPSIS
 

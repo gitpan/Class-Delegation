@@ -1,5 +1,5 @@
 ==============================================================================
-                 Release of version 1.00 of Class::Delegation
+                 Release of version 1.05 of Class::Delegation
 ==============================================================================
 
 
@@ -30,9 +30,14 @@ COPYRIGHT
 
 ==============================================================================
 
-CHANGES IN VERSION 1.00
+CHANGES IN VERSION 1.05
 
-(No changes have been documented for this version)
+
+	- Localized modification to %SIG (thanks Tatsuhiko)
+
+	- Preserved $AUTOLOAD in classes that both delegate and AUTOLOAD
+	  (thanks Michael)
+
 
 ==============================================================================
 
