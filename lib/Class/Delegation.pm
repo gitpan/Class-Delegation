@@ -1,5 +1,5 @@
 package Class::Delegation;
-$VERSION = '1.05';
+$VERSION = '1.06';
 use strict;
 use Carp;
 
@@ -44,13 +44,32 @@ sub install_delegation_for {
 		my @delegators = delegators_for(@context);
 		goto &{$real_AUTOLOAD} unless @delegators;
 		my (@results, $delegated);
-		foreach my $delegator ( @delegators ) {
+		DELEGATOR: foreach my $delegator ( @delegators ) {
 			next if $delegator->{other} && keys %$delegated;
-			foreach my $to (@{$delegator->{to}}) {
-				my $as = $delegator->{as};
-				print STDERR "[$to]\n" if ::DEBUG;
-				next if exists $delegated->{$to};
-				push @results, delegate($delegated,$wantarray,$invocant,$to,$as,\@args);
+			my @to = @{$delegator->{to}};
+			my @as = @{$delegator->{as}}; 
+			if (@to==1) {
+				print STDERR "[$to[0]]\n" if ::DEBUG;
+				next DELEGATOR if exists $delegated->{$to[0]};
+				foreach my $as (@as) {
+					push @results, delegate($delegated,$wantarray,$invocant,$to[0],$as,\@args);
+				}
+			}
+			elsif (@as==1) {
+				print STDERR "[$to[0]]\n" if ::DEBUG;
+				foreach my $to (@to) {
+					next if exists $delegated->{$to};
+					push @results, delegate($delegated,$wantarray,$invocant,$to,$as[0],\@args);
+				}
+			}
+			else {
+				while (1) {
+					last unless @to && @as;
+					my $to = shift @to;
+					my $as = shift @as;
+					next if exists $delegated->{$to};
+					push @results, delegate($delegated,$wantarray,$invocant,$to,$as,\@args);
+				}
 			}
 		}
 		goto &{$real_AUTOLOAD} unless keys %$delegated;
@@ -68,10 +87,14 @@ sub install_delegation_for {
 sub delegate {
 	my ($delegated,$wantarray,$invocant,$to,$as,$args) = @_;
 	no strict 'refs';
-	return unless eval { $invocant->{$to}->can($as) };
+	my $target = ref $to            ? $to
+		   : $to =~ /^->(\w+)$/ ? $invocant->$+()
+		   : $to eq -SELF       ? $invocant
+		   :                      $invocant->{$to};
+	return unless eval { $target->can($as) };
 	my $result = $wantarray
-			? eval { [$invocant->{$to}->$as(@$args)] }
-			: eval {  $invocant->{$to}->$as(@$args)  };
+			? eval { [$target->$as(@$args)] }
+			: eval {  $target->$as(@$args)  };
 	return if $@;
 	$_[0]->{$to}++;
 	return $result
@@ -81,11 +104,27 @@ sub delegators_for {
 	my ($self, $method, @args) = @_;
 
 	my @attrs;
-	foreach my $candidate ( @{$mappings{ref($self)||$self}} ) {
+	my $class = ref($self)||$self;
+	foreach my $candidate ( @{$mappings{$class}} ) {
 		push @attrs, $candidate->{send}->can_send(scalar(@attrs),
 							  $candidate->{to},
 							  $candidate->{as},
 							  @_);
+	}
+	return @attrs if @attrs;
+        no strict 'refs';
+	my @ancestors = @{$class.'::ISA'};
+	my $parent;
+	while ($parent = shift @ancestors) {
+	    next unless exists $mappings{$parent};
+	    foreach my $candidate ( @{$mappings{$parent}} ) {
+		push @attrs, $candidate->{send}->can_send(scalar(@attrs),
+							  $candidate->{to},
+							  $candidate->{as},
+							  @_);
+	    }
+	    return @attrs if @attrs;
+	    unshift @ancestors, @{$parent.'::ISA'};
 	}
 	return @attrs;
 }
@@ -101,14 +140,20 @@ sub new {
 	croak "Expected 'to => <attribute spec>' but found '$to => $to_val'"
 		unless $to eq 'to';
 
-	$send_val = class_for(Send => $send_val)->new($send_val);
-	$to_val   = class_for(To => $to_val)->new($to_val);
-	my $self = bless { send=>$send_val, to=>$to_val }, $class;
+	$send_val  = class_for(Send => $send_val)->new($send_val);
+	my $to_obj = class_for(To => $to_val)->new($to_val);
+	my $self = bless { send=>$send_val, to=>$to_obj }, $class;
 	if (($args->[0]||"") eq 'as') {
 		my ($as, $as_val) = splice @$args, 0, 2;
+		croak "Arrays specified for 'to' and 'as' must be same length"
+			unless ref($to_val) ne 'ARRAY'
+			    || ref($as_val) ne 'ARRAY'
+			    || @$to_val == @$as_val;
 		$self->{as} = class_for(As => $as_val)->new($as_val);
 	}
 	else {
+		croak "'to => -SELF' is meaningless without 'as => <new_name>'"
+			if $to_val eq -SELF;
 		$self->{as} = Class::Delegation::As::Sent->new();
 	}
 	return $self;
@@ -117,7 +162,7 @@ sub new {
 my %allowed;
 @{$allowed{Send}}{qw(ARRAY Regexp CODE)} = ();
 @{$allowed{To}}{qw(ARRAY Regexp CODE)} = ();
-@{$allowed{As}}{qw(CODE)} = ();
+@{$allowed{As}}{qw(ARRAY CODE)} = ();
 
 sub class_for {
 	my ($subclass, $value) = @_;
@@ -127,6 +172,16 @@ sub class_for {
 		unless exists $allowed{$subclass}{$type};
 	return "Class::Delegation::${subclass}::${type}";
 }
+
+package SELF;
+
+sub DESTROY {}
+sub AUTOLOAD {
+	my ($name) = $SELF::AUTOLOAD =~ m/.*::(.+)/;
+	bless \$name, 'SELF'
+}
+use overload 'neg' => sub { "->${$_[0]}" };
+
 
 package Class::Delegation::Send::SCALAR;
 
@@ -140,7 +195,7 @@ sub new {
 sub can_send {
 	my ($self, $sent, $to, $as, @context) = @_;
 	return { to => [$to->attr_for(@context)],
-		 as => $as->name_for(@context),
+		 as => [$as->name_for(@context)],
 	       }
 		if $$self eq $context[1];
 	return;
@@ -173,7 +228,7 @@ sub new {
 sub can_send {
 	my ($self, $sent, $to, $as, @context) = @_;
 	return { to => [$to->attr_for(@context)],
-		 as => $as->name_for(@context),
+		 as => [$as->name_for(@context)],
 	       }
 		if $context[1] =~ $$self;
 	return;
@@ -187,7 +242,7 @@ sub new { bless $_[1], $_[0] }
 sub can_send {
 	my ($self, $sent, $to, $as, @context) = @_;
 	return { to => [$to->attr_for(@context)],
-		 as => $as->name_for(@context),
+		 as => [$as->name_for(@context)],
 	       }
 		if $self->(@context);
 	return;
@@ -198,7 +253,7 @@ package Class::Delegation::Send::ALL;
 sub can_send {
 	my ($self, $sent, $to, $as, @context) = @_;
 	return { to => [$to->attr_for(@context)],
-		 as => $as->name_for(@context),
+		 as => [$as->name_for(@context)],
 	       }
 		if $context[1] ne 'DESTROY';
 	return;
@@ -209,7 +264,7 @@ package Class::Delegation::Send::OTHER;
 sub can_send { 
 	my ($self, $sent, $to, $as, @context) = @_;
 	return { to => [$to->attr_for(@context)],
-		 as => $as->name_for(@context),
+		 as => [$as->name_for(@context)],
 		 other => 1,
 	       }
 		if $context[1] ne 'DESTROY';
@@ -283,6 +338,15 @@ sub new {
 
 sub name_for { ${$_[0]} }
 
+package Class::Delegation::As::ARRAY;
+
+sub new {
+	my ($class, $value) = @_;
+	bless $value, $class;
+}
+
+sub name_for { @{$_[0]} }
+
 
 package Class::Delegation::As::Sent;
 
@@ -312,8 +376,8 @@ Class::Delegation - Object-oriented delegation
 
 =head1 VERSION
 
-This document describes version 1.05 of Class::Delegation,
-released December  1, 2001.
+This document describes version 1.06 of Class::Delegation,
+released April 23, 2002.
 
 =head1 SYNOPSIS
 
@@ -324,7 +388,8 @@ released December  1, 2001.
                   to => ["left_front_wheel", "right_front_wheel"],
 
                 send => 'drive',
-                  to => ["left_rear_wheel", "right_rear_wheel"],
+                  to => ["right_rear_wheel", "left_rear_wheel"],
+		  as => ["rotate_clockwise", "rotate_anticlockwise"]
 
                 send => 'power',
                   to => 'flywheel',
@@ -332,6 +397,10 @@ released December  1, 2001.
 
                 send => 'brake',
                   to => qr/.*_wheel$/,
+
+		send => 'halt'
+		  to => -SELF,
+		  as => 'brake',
 
                 send => qr/^MP_(.+)/,
                   to => 'mp3',
@@ -495,6 +564,10 @@ to a collection of nominated attributes in parallel, or
 
 to any attribute that can handle the message.
 
+=item *
+
+the object itself
+
 =back
 
 These three delegation mechanisms can be specified for:
@@ -521,10 +594,11 @@ all methods, delegated or not.
 
 =head2 The syntax and semantics of delegation
 
-To cause a hash-based class to delegate method invocations to its attributes, the 
-Class::Delegation module is imported into the class, and passed a list
-of method/handler mappings that specify the delegation required. Each mapping consists
-of between one and three key/value pairs. For example:
+To cause a hash-based class to delegate method invocations to its
+attributes, the Class::Delegation module is imported into the class, and
+passed a list of method/handler mappings that specify the delegation
+required. Each mapping consists of between one and three key/value
+pairs. For example:
 
         package Car;
         
@@ -533,7 +607,8 @@ of between one and three key/value pairs. For example:
                   to => ["left_front_wheel", "right_front_wheel"],
                 
                 send => 'drive',
-                  to => ["left_rear_wheel", "right_rear_wheel"],
+                  to => ["right_rear_wheel", "left_rear_wheel"],
+		  as => ["rotate_clockwise", "rotate_anticlockwise"]
                   
                 send => 'power',
                   to => 'flywheel',
@@ -621,11 +696,31 @@ C<$self-E<gt>{flywheel}-E<gt>power(...)>:
             send => 'power',
               to => 'flywheel';
 
-An array reference can be used in the attribute position to specify the a list of
-attributes, I<all of which> are delegated to -- in sequence they appear in
-the list. Note that each element of the array is processed recursively, so
-it may contain any of the other attribute specifiers described in this section
-(or, indeed, a nested array of attribute specifiers)
+If the attribute is specified via a single string that starts with C<"->...">
+then that string is taken as specifying the name of a I<method> of the
+current object. That method is called and is expected to return an 
+object. The original method that was being delegated is then delegated to that
+object. For example, to delegate invocations of C<$self-E<gt>power(...)> to
+C<$self-E<gt>flywheel()-E<gt>power(...)>:
+
+        use Class::Delegation
+            send => 'power',
+              to => '->flywheel';
+
+Since this syntax is a little obscure (and not a little ugly),
+the same effect can also be obtained like so:
+
+        use Class::Delegation
+            send => 'power',
+              to => -SELF->flywheel;
+
+
+An array reference can be used in the attribute position to specify the
+a list of attributes, I<all of which> are delegated to -- in sequence
+they appear in the list. Note that each element of the array is
+processed recursively, so it may contain any of the other attribute
+specifiers described in this section (or, indeed, a nested array of
+attribute specifiers)
 
 For example, to distribute invocations of C<$self-E<gt>drive(...)> to both
 C<$self-E<gt>{left_rear_wheel}-E<gt>drive(...)> and
@@ -660,12 +755,21 @@ example, to redispatch C<brake> calls to every attribute whose name ends in C<"_
         send => 'brake',
           to => qr/.*_wheel$/,
 
-If a subroutine reference is used as the attribute specifier, it is passed the
+If a subroutine reference is used as the C<'to'> attribute specifier, it is passed the
 invocant, the name of the method, and the argument list. It is expected to
-return a value specifying the correct attribute name (or names). As with an
+return either a value specifying the correct attribute name (or names). As with an
 array, the value returned may be any valid attribute specifier (including
 another subroutine reference) and is iteratively processed to determine the
 correct target(s) for delegation.
+
+A subroutine may also return a reference to an object, in which case the
+subroutine is delegated to that object (rather than to an attribute of
+the current object). This can be useful when the actual delegation target
+is more complex than just a direct attribute. For example:
+
+	send => 'start',
+	  to => sub { $_[0]{ignition}{security}[$_[0]->next_key] },
+
 
 If the C<-ALL> flag is used as the name of the attribute, the method
 is delegated to all attributes of the object (in their C<keys> order). For 
@@ -677,10 +781,11 @@ example, to forward debugging requests to every attribute in turn:
 
 =head2 Specifying the name of a delegated method
 
-Sometimes it is necessary to invoke an attribute's method through a different
-name than that of the original delegated method. The C<'as'> key facilitates this type
-of method name translation in any delegation. The value associated with an C<'as'> key specifies
-the name of the method to be invoked, and may be a string or a subroutine.
+Sometimes it is necessary to invoke an attribute's method through a
+different name than that of the original delegated method. The C<'as'>
+key facilitates this type of method name translation in any delegation.
+The value associated with an C<'as'> key specifies the name of the
+method to be invoked, and may be a string, an array, or a subroutine.
 
 If a string is provided, it is used as the new name of the delegated method.
 For example, to cause calls to C<$self-E<gt>power(...)>
@@ -689,6 +794,32 @@ to be delegated to C<$self-E<gt>{flywheel}-E<gt>brake(...)>:
         send => 'power',
           to => 'flywheel',
           as => 'brake',
+
+If an array is given, it specifies a list of delegated method names.
+If the C<'to'> key specifies a single attribute, each method in the list is
+invoked on that one attribute. For example:
+
+        send => 'boost',
+          to => 'flywheel',
+          as => ['override', 'engage', 'discharge'],
+
+would sequentially call:
+
+        $self->{flywheel}->override(...);
+        $self->{flywheel}->engage(...);
+        $self->{flywheel}->discharge(...);
+
+If both the C<'to'> key and the C<'as'> key specify multiple values, then
+each attribute and method name form a pair, which is invoked. For example:
+
+        send => 'escape',
+          to => ['flywheel', 'smokescreen'],
+          as => ['engage',   'release'],
+
+would sequentially call:
+
+        $self->{flywheel}->engage(...);
+        $self->{smokescreen}->release(...);
 
 If a subroutine reference is used as the C<'as'> specifier, it is passed the
 invocant, the name of the method, and the argument list, and is expected to
@@ -706,6 +837,26 @@ or:
           to => 'driver', 
           as => sub { $1 }
 
+
+=head2 Delegation to self
+
+Class::Delegation can also be used to delegate methods back to the original
+object, using the C<-SELF> option with the C<'to'> key. For example, to
+redirect any call to C<overdrive> so to invoke the C<boost> method instead:
+
+       send => 'overdrive',
+         to => -SELF,
+         as => 'boost',
+
+Note that this only works if the object I<does not> already have an
+C<overdrive> method.
+
+As with other delegations, a single call can be redelegated-to-self as
+multiple calls.  For example:
+
+       send => 'emergency',
+         to => -SELF,
+         as => ['overdrive', 'launch_rockets'],
 
 
 =head2 Handling failure to delegate

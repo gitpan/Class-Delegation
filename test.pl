@@ -6,7 +6,7 @@
 # Change 1..1 below to 1..last_test_to_print .
 # (It may become useful if the test is moved to ./t subdirectory.)
 
-BEGIN { $| = 1; print "1..34\n"; }
+BEGIN { $| = 1; print "1..51\n"; }
 END {print "not ok 1\n" unless $loaded;}
 use Class::Delegation;
 $loaded = 1;
@@ -73,6 +73,14 @@ use Class::Delegation
 	  to => ['other2', 'attr1'],
 	  as => 'method3',
 
+	send => 'method3b',
+	  to => 'other2',
+	  as => ['method2','method1'],
+
+	send => 'method3c',
+	  to => ['other2', 'attr1'],
+	  as => ['method2','method1'],
+
 	send => ['method4a', 'method4b'],
 	  to => other1,
 
@@ -91,6 +99,34 @@ use Class::Delegation
 	send => ['METHOD1', qr/Method[23]/, sub{substr($_[1],0,6) eq 'MeTHoD'}],
 	  to => ['attr2', qr/other\d/],
 	  as => sub { lc $_[1] },
+
+	send => 'virtual',
+	  to => -SELF,
+	  as => 'actual',
+
+	send => 'virtual2',
+	  to => -SELF,
+	  as => ['actual','factual'],
+
+	send => 'virtual3',
+	  to => [-SELF, 'other1'],
+	  as => ['actual','method3'],
+
+	send => 'methodical',
+	  to => '->otherwise',
+	  as => 'method3',
+
+	send => 'methodical2',
+	  to => -SELF->otherwise,
+	  as => 'method3',
+
+	send => 'objective',
+	  to => sub { $_[0]->otherwise },
+	  as => 'method3',
+
+	send => 'objective2',
+	  to => sub { Other->new(9) },
+	  as => 'method1',
 ;
 
 sub new {
@@ -103,6 +139,10 @@ sub new {
 		default => Def->new(),
 	      }, $class;
 }
+
+sub actual { return 'Derived::Actual' }
+sub factual { return 'Derived::Factual' }
+sub otherwise { return Attr->new(3) }
 
 sub AUTOLOAD { return 'AUTOLOAD' }
 
@@ -149,6 +189,19 @@ ok($res->[0] eq 'Other(2)::method3');
 ok($res->[1] eq 'Attr(1)::method3');
 
 
+# MULTI-TARGET DELEGATION WITH MULTI-RENAMING
+
+$res = $obj->method3b;
+ok(@$res == 2);
+ok($res->[0] eq 'Other(2)::method2');
+ok($res->[1] eq 'Other(2)::method1');
+
+$res = $obj->method3c;
+ok(@$res == 2);
+ok($res->[0] eq 'Other(2)::method2');
+ok($res->[1] eq 'Attr(1)::method1');
+
+
 # MULTI-EVERYTHING
 
 $res = $obj->METHOD1;
@@ -168,3 +221,30 @@ ok(@$res == 3);
 ok($res->[0] eq 'Attr(2)::method3');
 ok($res->[1] eq 'Other(1)::method3');
 ok($res->[2] eq 'Other(2)::method3');
+
+# SELF-DELEGATION
+
+$res = $obj->virtual;
+ok($res eq 'Derived::Actual');
+
+$res = $obj->virtual2;
+ok(@$res == 2);
+ok($res->[0] eq 'Derived::Actual');
+ok($res->[1] eq 'Derived::Factual');
+
+$res = $obj->virtual3;
+ok(@$res == 2);
+ok($res->[0] eq 'Derived::Actual');
+ok($res->[1] eq 'Other(1)::method3');
+
+$res = $obj->methodical;
+ok($res eq 'Attr(3)::method3');
+
+$res = $obj->methodical2;
+ok($res eq 'Attr(3)::method3');
+
+$res = $obj->objective;
+ok($res eq 'Attr(3)::method3');
+
+$res = $obj->objective2;
+ok($res eq 'Other(9)::method1');

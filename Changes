@@ -10,3 +10,16 @@ Revision history for Perl extension Class::Delegation.
 
 	- Preserved $AUTOLOAD in classes that both delegate and AUTOLOAD
 	  (thanks Michael)
+
+
+1.06	Tue Apr 23 14:20:20 2002
+
+	- Made delegation inherited
+
+	- Added 'to => -SELF' option (thanks Piers)
+
+	- Added 'to => -SELF->method' option (thanks Piers)
+
+	- Allowed 'as' to take an array (thanks Piers)
+
+	- Allowed 'to' subs to return an object to be delegated to

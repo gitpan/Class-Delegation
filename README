@@ -1,5 +1,5 @@
 ==============================================================================
-                 Release of version 1.05 of Class::Delegation
+                 Release of version 1.06 of Class::Delegation
 ==============================================================================
 
 
@@ -30,13 +30,18 @@ COPYRIGHT
 
 ==============================================================================
 
-CHANGES IN VERSION 1.05
+CHANGES IN VERSION 1.06
 
 
-	- Localized modification to %SIG (thanks Tatsuhiko)
+	- Made delegation inherited
 
-	- Preserved $AUTOLOAD in classes that both delegate and AUTOLOAD
-	  (thanks Michael)
+	- Added 'to => -SELF' option (thanks Piers)
+
+	- Added 'to => -SELF->method' option (thanks Piers)
+
+	- Allowed 'as' to take an array (thanks Piers)
+
+	- Allowed 'to' subs to return an object to be delegated to
 
 
 ==============================================================================
