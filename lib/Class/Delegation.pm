@@ -1,5 +1,7 @@
 package Class::Delegation;
-$VERSION = '1.06';
+
+use version; $VERSION = qv('1.7.1');
+
 use strict;
 use Carp;
 
@@ -11,22 +13,22 @@ sub import {
 	my $class = shift;
 	my $caller = caller();
 	while (@_) {
-		push @{$mappings{$caller}}, Class::Delegation::->new(\@_);
+		push @{$mappings{$caller}}, Class::Delegation::->_new(\@_);
 	}
 }
 
 INIT {
 	foreach my $class (keys %mappings) {
-		install_delegation_for($class);
+		_install_delegation_for($class);
 	}
 }
 
-sub install_delegation_for {
+sub _install_delegation_for {
 	use vars '$AUTOLOAD';
 	no strict 'refs';
 	my ($class) = @_;
 	my $symbol = "${class}::AUTOLOAD";
-	print "Installing $symbol\n" if ::DEBUG;
+	print STDERR "Installing $symbol\n" if ::DEBUG;
 	my $real_AUTOLOAD = *{$symbol}{CODE}
 			 || sub {croak "Could not delegate $AUTOLOAD"};
 		
@@ -37,11 +39,11 @@ sub install_delegation_for {
 		my ($invocant, @args) = @_;
 		print STDERR "Delegating: $AUTOLOAD...\n" if ::DEBUG;
 		use Data::Dumper 'Dumper';
-		print "...on: ", Dumper $invocant if ::DEBUG;
+		print STDERR "...on: ", Dumper $invocant if ::DEBUG;
 		my @context = ($invocant, $method, @args);
 		$invocant = "${class}${invocant}" unless ref $invocant;
 		my $wantarray = wantarray;
-		my @delegators = delegators_for(@context);
+		my @delegators = _delegators_for(@context);
 		goto &{$real_AUTOLOAD} unless @delegators;
 		my (@results, $delegated);
 		DELEGATOR: foreach my $delegator ( @delegators ) {
@@ -79,7 +81,7 @@ sub install_delegation_for {
 	};
 
 	unless (*{"${class}::DESTROY"}{CODE} ||
-		delegators_for($class,'DESTROY')) {
+		_delegators_for($class,'DESTROY')) {
 		*{"${class}::DESTROY"} = sub {};
 	}
 }
@@ -91,16 +93,18 @@ sub delegate {
 		   : $to =~ /^->(\w+)$/ ? $invocant->$+()
 		   : $to eq -SELF       ? $invocant
 		   :                      $invocant->{$to};
-	return unless eval { $target->can($as) };
+	return unless eval {
+		$target->can($as)  || $target->can('AUTOLOAD')
+	};
 	my $result = $wantarray
-			? eval { [$target->$as(@$args)] }
-			: eval {  $target->$as(@$args)  };
+			? [$target->$as(@$args)]
+			: $target->$as(@$args);
 	return if $@;
 	$_[0]->{$to}++;
 	return $result
 }
 
-sub delegators_for {
+sub _delegators_for {
 	my ($self, $method, @args) = @_;
 
 	my @attrs;
@@ -129,7 +133,7 @@ sub delegators_for {
 	return @attrs;
 }
 
-sub new {
+sub _new {
 	my ($class, $args) = @_;
 	my ($send, $send_val) = splice @$args, 0, 2;
 	croak "Expected 'send => <method spec>' but found '$send => $send_val'"
@@ -140,8 +144,8 @@ sub new {
 	croak "Expected 'to => <attribute spec>' but found '$to => $to_val'"
 		unless $to eq 'to';
 
-	$send_val  = class_for(Send => $send_val)->new($send_val);
-	my $to_obj = class_for(To => $to_val)->new($to_val);
+	$send_val  = _class_for(Send => $send_val)->_new($send_val);
+	my $to_obj = _class_for(To => $to_val)->_new($to_val);
 	my $self = bless { send=>$send_val, to=>$to_obj }, $class;
 	if (($args->[0]||"") eq 'as') {
 		my ($as, $as_val) = splice @$args, 0, 2;
@@ -149,12 +153,12 @@ sub new {
 			unless ref($to_val) ne 'ARRAY'
 			    || ref($as_val) ne 'ARRAY'
 			    || @$to_val == @$as_val;
-		$self->{as} = class_for(As => $as_val)->new($as_val);
+		$self->{as} = _class_for(As => $as_val)->_new($as_val);
 	}
 	else {
 		croak "'to => -SELF' is meaningless without 'as => <new_name>'"
 			if $to_val eq -SELF;
-		$self->{as} = Class::Delegation::As::Sent->new();
+		$self->{as} = Class::Delegation::As::Sent->_new();
 	}
 	return $self;
 }
@@ -164,7 +168,7 @@ my %allowed;
 @{$allowed{To}}{qw(ARRAY Regexp CODE)} = ();
 @{$allowed{As}}{qw(ARRAY CODE)} = ();
 
-sub class_for {
+sub _class_for {
 	my ($subclass, $value) = @_;
 	my $type = ref($value);
 	return "Class::Delegation::${subclass}::SCALAR" unless $type;
@@ -185,7 +189,7 @@ use overload 'neg' => sub { "->${$_[0]}" };
 
 package Class::Delegation::Send::SCALAR;
 
-sub new {
+sub _new {
 	return bless {}, "Class::Delegation::Send::ALL" if $_[1] eq '-ALL';
 	return bless {}, "Class::Delegation::Send::OTHER" if $_[-1] eq '-OTHER';
 	my $val = pop;
@@ -204,9 +208,9 @@ sub can_send {
 
 package Class::Delegation::Send::ARRAY;
 
-sub new {
+sub _new {
 	my @delegators =
-	    map { Class::Delegation::class_for(Send => $_)->new($_) } @{$_[1]};
+	    map { Class::Delegation::_class_for(Send => $_)->_new($_) } @{$_[1]};
 	bless \@delegators, $_[0];
 }
 
@@ -218,7 +222,7 @@ sub can_send {
 
 package Class::Delegation::Send::Regexp;
 
-sub new {
+sub _new {
 	my ($class, $regex) = @_;
 	my $self = bless \$regex, $class;
 	return $self;
@@ -237,7 +241,7 @@ sub can_send {
 
 package Class::Delegation::Send::CODE;
 
-sub new { bless $_[1], $_[0] }
+sub _new { bless $_[1], $_[0] }
 
 sub can_send {
 	my ($self, $sent, $to, $as, @context) = @_;
@@ -274,7 +278,7 @@ sub can_send {
    
 package Class::Delegation::To::SCALAR;
 
-sub new {
+sub _new {
 	my ($class, $value) = @_;
 	return bless {}, "Class::Delegation::To::ALL" if $value eq '-ALL';
 	return bless \$value, $class
@@ -285,9 +289,9 @@ sub attr_for { return ${$_[0]} }
 
 package Class::Delegation::To::ARRAY;
 
-sub new {
+sub _new {
 	my ($class, $array) = @_;
-	bless [ map {("Class::Delegation::To::".(ref||"SCALAR"))->new($_)} @$array ], $class;
+	bless [ map {("Class::Delegation::To::".(ref||"SCALAR"))->_new($_)} @$array ], $class;
 }
 
 sub attr_for {
@@ -297,7 +301,7 @@ sub attr_for {
 
 package Class::Delegation::To::Regexp;
 
-sub new {
+sub _new {
 	my ($class, $regex) = @_;
 	my $self = bless \$regex, $class;
 	return $self;
@@ -305,14 +309,14 @@ sub new {
 
 sub attr_for {
 	my ($self, $invocant, @context) = @_;
-	print "[[$$self]]\n" if ::DEBUG;
+	print STDERR "[[$$self]]\n" if ::DEBUG;
 	return grep {  $_ =~ $$self } keys %$invocant;
 }
 
 
 package Class::Delegation::To::CODE;
 
-sub new { bless $_[1], $_[0] }
+sub _new { bless $_[1], $_[0] }
 
 sub attr_for {
 	my ($self, @context) = @_;
@@ -331,7 +335,7 @@ sub attr_for {
 
 package Class::Delegation::As::SCALAR;
 
-sub new {
+sub _new {
 	my ($class, $value) = @_;
 	bless \$value, $class;
 }
@@ -340,7 +344,7 @@ sub name_for { ${$_[0]} }
 
 package Class::Delegation::As::ARRAY;
 
-sub new {
+sub _new {
 	my ($class, $value) = @_;
 	bless $value, $class;
 }
@@ -350,7 +354,7 @@ sub name_for { @{$_[0]} }
 
 package Class::Delegation::As::Sent;
 
-sub new { bless {}, $_[0] }
+sub _new { bless {}, $_[0] }
 
 sub name_for {
 	my ($self, $invocant, $method) = @_;
@@ -359,7 +363,7 @@ sub name_for {
 
 package Class::Delegation::As::CODE;
 
-sub new { bless $_[1], $_[0] }
+sub _new { bless $_[1], $_[0] }
 
 sub name_for {
 	my ($self, @context) = @_;
@@ -427,10 +431,10 @@ inheritance has a fundamental limitation: a class can only directly inherit
 once from a given parent class. This limitation occasionally
 leads to awkward work-arounds like this:
 
-	package Left_Front_Wheel;   use base wq( Wheel );
-	package Left_Rear_Wheel;    use base wq( Wheel );
-	package Right_Front_Wheel;  use base wq( Wheel );
-	package Right_Rear_Wheel;   use base wq( Wheel );
+	package Left_Front_Wheel;   use base qw( Wheel );
+	package Left_Rear_Wheel;    use base qw( Wheel );
+	package Right_Front_Wheel;  use base qw( Wheel );
+	package Right_Rear_Wheel;   use base qw( Wheel );
 
 	package Car;                use base qw(Left_Front_Wheel
 						Left_Rear_Wheel 

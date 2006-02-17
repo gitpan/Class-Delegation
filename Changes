@@ -23,3 +23,18 @@ Revision history for Perl extension Class::Delegation.
 	- Allowed 'as' to take an array (thanks Piers)
 
 	- Allowed 'to' subs to return an object to be delegated to
+
+
+
+1.7.1  Fri Feb 17 19:10:58 2006
+
+	- Fixed test suite to be independent of hash key ordering
+	  (thanks Andreas)
+
+	- Allowed delegation to AUTOLOADed methods (thanks Corion)
+
+	- Fixed debugging output (thanks Steve)
+
+	- Removed superfluous and buggy C<eval>
+
+	- Fixed pod nits (thanks Dmitry)

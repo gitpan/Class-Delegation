@@ -13,7 +13,11 @@ $loaded = 1;
 print "ok 1\n";
 
 my $n = 2;
-sub ok { print "not " if @_ && !$_[0]; print  "ok $n\n"; $n++ }
+sub ok {
+	print "not " if @_ && !$_[0];
+	print  "ok $n\n";
+	$n++
+}
 
 ######################### End of black magic.
 
@@ -178,6 +182,7 @@ ok($res->[1] eq 'Attr(1)::method3');
 
 $res = $obj->method6;
 ok(@$res == 2);
+@$res = sort @$res;
 ok($res->[0] eq 'Other(1)::method3');
 ok($res->[1] eq 'Other(2)::method3');
 
@@ -185,38 +190,44 @@ ok($res->[1] eq 'Other(2)::method3');
 
 $res = $obj->method3a;
 ok(@$res == 2);
-ok($res->[0] eq 'Other(2)::method3');
-ok($res->[1] eq 'Attr(1)::method3');
+@$res = sort @$res;
+ok($res->[0] eq 'Attr(1)::method3');
+ok($res->[1] eq 'Other(2)::method3');
 
 
 # MULTI-TARGET DELEGATION WITH MULTI-RENAMING
 
 $res = $obj->method3b;
 ok(@$res == 2);
-ok($res->[0] eq 'Other(2)::method2');
-ok($res->[1] eq 'Other(2)::method1');
+@$res = sort @$res;
+ok($res->[0] eq 'Other(2)::method1');
+ok($res->[1] eq 'Other(2)::method2');
 
 $res = $obj->method3c;
 ok(@$res == 2);
-ok($res->[0] eq 'Other(2)::method2');
-ok($res->[1] eq 'Attr(1)::method1');
+@$res = sort @$res;
+ok($res->[0] eq 'Attr(1)::method1');
+ok($res->[1] eq 'Other(2)::method2');
 
 
 # MULTI-EVERYTHING
 
 $res = $obj->METHOD1;
 ok(@$res == 3);
+@$res = sort @$res;
 ok($res->[0] eq 'Attr(2)::method1');
 ok($res->[1] eq 'Other(1)::method1');
 ok($res->[2] eq 'Other(2)::method1');
 
 $res = $obj->Method2;
+@$res = sort @$res;
 ok(@$res == 3);
 ok($res->[0] eq 'Attr(2)::method2');
 ok($res->[1] eq 'Other(1)::method2');
 ok($res->[2] eq 'Other(2)::method2');
 
 $res = $obj->MeTHoD3;
+@$res = sort @$res;
 ok(@$res == 3);
 ok($res->[0] eq 'Attr(2)::method3');
 ok($res->[1] eq 'Other(1)::method3');
